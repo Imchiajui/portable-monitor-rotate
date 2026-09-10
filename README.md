@@ -34,7 +34,7 @@ This is a 28 KB tray utility that fixes both halves of that.
 - **Position is preserved.** The monitor keeps the side you put it on (left / right / above / below) and stays flush against the shared edge, through every rotation, unplug and reconnect.
 - **Remembers across disconnects.** Unplug the monitor, the icon disappears; plug it back in, the icon returns *to the same slot in the tray* and the monitor returns to the same place on your desk.
 - **The pointer stays put.** Changing display mode normally warps your cursor to the centre of the primary screen. It doesn't here.
-- **Global hotkey** — <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>R</kbd>.
+- **English or Traditional Chinese interface**, following Windows by default.
 - **Scriptable** via CLI and a named pipe, so you can drive it from AutoHotkey, a Stream Deck, or your own hardware.
 - **No installer, no dependencies, no telemetry, no background network access.** A single .exe on .NET Framework 4.x, which ships with Windows.
 
@@ -42,7 +42,7 @@ This is a 28 KB tray utility that fixes both halves of that.
 
 1. Download `MonitorRotateTray.exe` from the [latest release](https://github.com/Imchiajui/portable-monitor-rotate/releases/latest).
 2. Put it somewhere permanent — for example `C:\Users\<you>\Tools\MonitorRotateTray\`.
-3. Run it. Right-click the tray icon → **開機自動啟動 / Start with Windows** if you want it always on.
+3. Run it. Right-click the tray icon → **Start with Windows** if you want it always on.
 
 > **Pick the folder before you enable autostart.** Two things bind to the executable's full path: the Windows autostart entry, and the tray icon's remembered position. Moving the .exe later breaks both — autostart silently stops working, and the icon resets to the overflow area once.
 
@@ -53,9 +53,10 @@ This is a 28 KB tray utility that fixes both halves of that.
 | Action | Result |
 |---|---|
 | **Left click** the tray icon | Toggle between the two orientations |
-| **Right click** | Menu: all four angles, target monitor, position & alignment, autostart |
-| <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>R</kbd> | Same as left click |
+| **Right click** | Menu: all four angles, target monitor, position & alignment, language, autostart |
 | Hover | Monitor name and current orientation |
+
+The interface follows the Windows display language — English elsewhere, Traditional Chinese on a Chinese system. Override it under **Language** in the right-click menu.
 
 ### Choosing the monitor
 
@@ -126,7 +127,7 @@ This is deliberately the whole integration surface. If you ever bolt a real orie
 | `KeepLayout` | Re-apply the position on rotate and reconnect |
 | `LearnPlacement` | Adopt the arrangement you set in Windows Settings |
 | `HideWhenDisconnected` | Hide the tray icon while the monitor is away |
-| `Hotkey` | Enable <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>R</kbd> |
+| `Language` | `auto` (follow Windows), `en`, or `zh-TW` |
 
 A state snapshot is written to `%APPDATA%\MonitorRotateTray\last-run.log` on every start and on `diag` — attach it if you file an issue.
 

@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Globalization;
 using System.IO;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
@@ -31,10 +32,6 @@ namespace MonitorRotateTray
 
         public const int DISPLAY_DEVICE_ATTACHED_TO_DESKTOP = 0x00000001;
         public const int DISPLAY_DEVICE_PRIMARY_DEVICE      = 0x00000004;
-
-        // --- hotkey ---
-        public const int WM_HOTKEY = 0x0312;
-        public const uint MOD_ALT = 0x1, MOD_CONTROL = 0x2, MOD_NOREPEAT = 0x4000;
 
         // --- shell notify icon ---
         public const int NIM_ADD = 0x0, NIM_MODIFY = 0x1, NIM_DELETE = 0x2, NIM_SETVERSION = 0x4;
@@ -172,12 +169,6 @@ namespace MonitorRotateTray
         public static extern int DisplayConfigGetDeviceInfo(ref SOURCE_DEVICE_NAME r);
 
         [DllImport("user32.dll")]
-        public static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
-
-        [DllImport("user32.dll")]
-        public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
-
-        [DllImport("user32.dll")]
         public static extern bool DestroyIcon(IntPtr handle);
 
         [StructLayout(LayoutKind.Sequential)]
@@ -205,7 +196,7 @@ namespace MonitorRotateTray
         public int PosX, PosY;      // top-left in virtual-desktop coords; primary is (0,0)
         public bool IsPrimary;
 
-        public string OrientationText { get { return Names.Orient(Orientation); } }
+        public string OrientationText { get { return L.Orient(Orientation); } }
         public bool IsPortrait { get { return Orientation == 1 || Orientation == 3; } }
         public int CenterX { get { return PosX + Width / 2; } }
         public int CenterY { get { return PosY + Height / 2; } }
@@ -220,18 +211,108 @@ namespace MonitorRotateTray
     /// </summary>
     internal enum Align { Start = 0, Center = 1, End = 2 }
 
-    internal static class Names
+    /// <summary>
+    /// Interface strings. English by default; Traditional Chinese when the config asks
+    /// for it, or when Windows itself is running in Chinese.
+    /// </summary>
+    internal static class L
     {
+        private static bool _zh;
+
+        /// <param name="mode">"en", "zh-TW", or anything else meaning "follow Windows".</param>
+        public static void Use(string mode)
+        {
+            if (string.Equals(mode, "zh-TW", StringComparison.OrdinalIgnoreCase)) _zh = true;
+            else if (string.Equals(mode, "en", StringComparison.OrdinalIgnoreCase)) _zh = false;
+            else _zh = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName
+                        .Equals("zh", StringComparison.OrdinalIgnoreCase);
+        }
+
+        public static bool IsChinese { get { return _zh; } }
+
+        private static string S(string en, string zh) { return _zh ? zh : en; }
+
         public static string Orient(int q)
         {
             switch (q)
             {
-                case 1:  return "\u76F4\u5411 90\u00B0";     // 直向 90
-                case 2:  return "\u6A6B\u5411 180\u00B0";    // 橫向 180
-                case 3:  return "\u76F4\u5411 270\u00B0";    // 直向 270
-                default: return "\u6A6B\u5411 0\u00B0";      // 橫向 0
+                case 1:  return S("Portrait 90°",   "直向 90°");
+                case 2:  return S("Landscape 180°", "橫向 180°");
+                case 3:  return S("Portrait 270°",  "直向 270°");
+                default: return S("Landscape 0°",   "橫向 0°");
             }
         }
+
+        public static string Side(int i)
+        {
+            switch (i)
+            {
+                case 1:  return S("Right", "右邊");
+                case 2:  return S("Directly above", "正上方");
+                case 3:  return S("Directly below", "正下方");
+                default: return S("Left", "左邊");
+            }
+        }
+
+        public static string AlignName(bool horizontal, int i)
+        {
+            if (horizontal)
+            {
+                switch (i)
+                {
+                    case 1:  return S("Centre vertically", "垂直置中");
+                    case 2:  return S("Bottom edges level", "下緣切齊");
+                    default: return S("Top edges level", "上緣切齊");
+                }
+            }
+            switch (i)
+            {
+                case 1:  return S("Centre horizontally", "水平置中");
+                case 2:  return S("Right edges level", "右緣切齊");
+                default: return S("Left edges level", "左緣切齊");
+            }
+        }
+
+        public static string BalloonTitle   { get { return S("Monitor orientation", "螢幕方向"); } }
+        public static string NoTarget       { get { return S("Target monitor not found", "找不到目標螢幕"); } }
+        public static string NotConnected   { get { return S("Not connected", "未連接"); } }
+        public static string NoMonitorFound { get { return S("Monitor not found", "找不到螢幕"); } }
+        public static string TipHint        { get { return S("Left click to toggle / right click for menu", "左鍵切換 / 右鍵選單"); } }
+
+        public static string BadOrientation { get { return S("Invalid orientation value", "方向值無效"); } }
+        public static string ReadFailed     { get { return S("Could not read the current display settings", "讀取目前顯示設定失敗"); } }
+
+        public static string ModeRejected(int rc)
+        {
+            return S("Display mode rejected (CDS_TEST rc=" + rc + ")",
+                     "顯示模式不被接受 (CDS_TEST rc=" + rc + ")");
+        }
+
+        public static string StageFailed(int rc)
+        {
+            return S("Could not stage the change (rc=" + rc + ")",
+                     "排程失敗 (rc=" + rc + ")");
+        }
+
+        public static string ApplyFailed(int rc)
+        {
+            return S("Could not apply the change (rc=" + rc + ")",
+                     "套用失敗 (rc=" + rc + ")");
+        }
+
+        public static string TogglePair     { get { return S("Left click toggles: ", "左鍵切換組合："); } }
+        public static string TargetMonitor  { get { return S("Target monitor", "目標螢幕"); } }
+        public static string NoDisplays     { get { return S("(no displays available)", "(沒有可用螢幕)"); } }
+        public static string PrimarySuffix  { get { return S("primary", "主要"); } }
+        public static string PositionMenu   { get { return S("External monitor position: ", "外接螢幕位置："); } }
+        public static string AlignAuto      { get { return S("Automatic (side by side → bottom edges, stacked → centred)", "自動（左右→下緣切齊，上下→水平置中）"); } }
+        public static string KeepLayout     { get { return S("Keep position on rotate and reconnect", "轉向/重新連接時固定位置"); } }
+        public static string LearnPlacement { get { return S("Adopt the position I set in Windows Settings", "記住我在設定中拖曳的位置"); } }
+        public static string HideDisconnect { get { return S("Hide icon while the monitor is away", "螢幕斷線時隱藏圖示"); } }
+        public static string Autostart      { get { return S("Start with Windows", "開機自動啟動"); } }
+        public static string LanguageMenu   { get { return S("Language", "語言"); } }
+        public static string LangFollow     { get { return S("Follow Windows", "跟隨系統"); } }
+        public static string Exit           { get { return S("Exit", "結束"); } }
     }
 
     internal static class Displays
@@ -419,8 +500,8 @@ namespace MonitorRotateTray
         public bool FallbackToExternal = true;   // last resort: any non-primary display
         public int OrientA = 0;   // landscape
         public int OrientB = 3;   // portrait
-        public bool Hotkey = true;
         public bool HideWhenDisconnected = true;
+        public string Language = "auto";   // "auto" | "en" | "zh-TW"
 
         public Placement Placement = Placement.Left;
         public int AlignMode = -1;         // -1 = auto (see EffectiveAlign), else 0/1/2
@@ -469,8 +550,8 @@ namespace MonitorRotateTray
                     else if (k == "FallbackToExternal") c.FallbackToExternal = IsTrue(v);
                     else if (k == "OrientA" && int.TryParse(v, out n)) c.OrientA = n;
                     else if (k == "OrientB" && int.TryParse(v, out n)) c.OrientB = n;
-                    else if (k == "Hotkey") c.Hotkey = IsTrue(v);
                     else if (k == "HideWhenDisconnected") c.HideWhenDisconnected = IsTrue(v);
+                    else if (k == "Language") c.Language = v;
                     else if (k == "KeepLayout") c.KeepLayout = IsTrue(v);
                     else if (k == "LearnPlacement") c.LearnPlacement = IsTrue(v);
                     else if (k == "Placement" && int.TryParse(v, out n) && n >= 0 && n <= 3)
@@ -499,10 +580,10 @@ namespace MonitorRotateTray
                 sb.AppendLine("FallbackToExternal=" + (FallbackToExternal ? "1" : "0"));
                 sb.AppendLine("OrientA=" + OrientA);
                 sb.AppendLine("OrientB=" + OrientB);
-                sb.AppendLine("Hotkey=" + (Hotkey ? "1" : "0"));
                 sb.AppendLine("HideWhenDisconnected=" + (HideWhenDisconnected ? "1" : "0"));
-                sb.AppendLine("Placement=" + (int)Placement + "   ; 0=左 1=右 2=上 3=下");
-                sb.AppendLine("Align=" + AlignMode + "   ; -1=自動(左右→下緣, 上下→水平置中) 0=起始 1=置中 2=結束");
+                sb.AppendLine("Language=" + Language + "   ; auto | en | zh-TW");
+                sb.AppendLine("Placement=" + (int)Placement + "   ; 0=left 1=right 2=above 3=below");
+                sb.AppendLine("Align=" + AlignMode + "   ; -1=auto 0=start 1=centre 2=end");
                 sb.AppendLine("KeepLayout=" + (KeepLayout ? "1" : "0"));
                 sb.AppendLine("LearnPlacement=" + (LearnPlacement ? "1" : "0"));
                 File.WriteAllText(FilePath, sb.ToString(), new UTF8Encoding(true));
@@ -679,14 +760,12 @@ namespace MonitorRotateTray
     // ---------------------------------------------------------- Message window
     internal class MessageWindow : NativeWindow
     {
-        private const int HOTKEY_ID = 0xB001;
         private static readonly int WM_TASKBARCREATED = Native.RegisterWindowMessage("TaskbarCreated");
 
         private readonly Action _onToggle;
         private readonly Action<int, int> _onContextMenu;
         private readonly Action _onTaskbarCreated;
         private readonly Func<bool> _isVersion4;
-        private bool _hotkeyRegistered;
 
         /// <summary>Ring buffer of raw tray callbacks, so a failing click can be traced.</summary>
         public readonly List<string> RawLog = new List<string>();
@@ -709,30 +788,8 @@ namespace MonitorRotateTray
             CreateHandle(new CreateParams());
         }
 
-        public bool RegisterHotkey()
-        {
-            if (_hotkeyRegistered) return true;
-            _hotkeyRegistered = Native.RegisterHotKey(Handle, HOTKEY_ID,
-                Native.MOD_CONTROL | Native.MOD_ALT | Native.MOD_NOREPEAT, (uint)Keys.R);
-            return _hotkeyRegistered;
-        }
-
-        public void UnregisterHotkey()
-        {
-            if (!_hotkeyRegistered) return;
-            Native.UnregisterHotKey(Handle, HOTKEY_ID);
-            _hotkeyRegistered = false;
-        }
-
         protected override void WndProc(ref Message m)
         {
-            if (m.Msg == Native.WM_HOTKEY && m.WParam.ToInt32() == HOTKEY_ID)
-            {
-                Record("HOTKEY");
-                _onToggle();
-                return;
-            }
-
             if (m.Msg == Native.WM_TRAYCALLBACK)
             {
                 // NOTIFYICON_VERSION_4: wParam = anchor x/y, lParam = event id | (uID << 16)
@@ -806,10 +863,12 @@ namespace MonitorRotateTray
         private DateTime _stableSince = DateTime.MinValue;
         private DateTime _verifyUntil = DateTime.MinValue;
         private bool _enforcePending;
+        private string _lastError;   // surfaced in the diagnostics log
 
         public TrayApp()
         {
             _cfg = Config.Load();
+            L.Use(_cfg.Language);
 
             _sync = new Control();
             IntPtr force = _sync.Handle;    // realise the UI-thread window
@@ -827,7 +886,6 @@ namespace MonitorRotateTray
                 if (pick != null) { _cfg.TargetHardwareId = pick.HardwareId; _cfg.Save(); }
             }
 
-            if (_cfg.Hotkey) _win.RegisterHotkey();
 
             SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
 
@@ -868,20 +926,21 @@ namespace MonitorRotateTray
                 sb.AppendLine("guid mode   : " + _tray.UsingGuid + "   (false = position will not persist)");
                 sb.AppendLine("version 4   : " + _tray.Version4 + "   (true = act on NIN_* only, not raw clicks)");
                 sb.AppendLine("icon shown  : " + _tray.Shown);
-                sb.AppendLine("hotkey      : " + _cfg.Hotkey);
+                sb.AppendLine("language    : " + (L.IsChinese ? "zh-TW" : "en") + "   (setting: " + _cfg.Language + ")");
                 sb.AppendLine();
                 sb.AppendLine("match rule  : " + how);
                 sb.AppendLine("target      : " + (m != null
                     ? m.Name + "  (" + m.Adapter + ", " + m.OrientationText + ", " + m.Width + "x" + m.Height + ")"
                     : "NONE"));
-                sb.AppendLine("toggle pair : " + Names.Orient(_cfg.OrientA) + " <-> " + Names.Orient(_cfg.OrientB));
+                sb.AppendLine("toggle pair : " + L.Orient(_cfg.OrientA) + " <-> " + L.Orient(_cfg.OrientB));
+                sb.AppendLine("last apply  : " + (_lastError ?? "(not attempted)"));
                 sb.AppendLine();
-                string[] sideNames = { "左", "右", "上", "下" };
-                string[] alignNames = { "起始", "置中", "結束" };
+                string[] sideNames = { "left", "right", "above", "below" };
+                string[] alignNames = { "start", "centre", "end" };
                 Align eff = _cfg.EffectiveAlign(_cfg.Placement);
                 sb.AppendLine("placement   : " + sideNames[(int)_cfg.Placement]
                     + " / " + alignNames[(int)eff]
-                    + (_cfg.AlignMode < 0 ? " (自動)" : " (指定)")
+                    + (_cfg.AlignMode < 0 ? " (auto)" : " (explicit)")
                     + "   keep=" + _cfg.KeepLayout + " learn=" + _cfg.LearnPlacement);
                 var prim = Primary();
                 if (m != null && prim != null && !m.IsPrimary)
@@ -1052,7 +1111,7 @@ namespace MonitorRotateTray
             var m = Target();
             if (m == null)
             {
-                Warn("\u627E\u4E0D\u5230\u76EE\u6A19\u87A2\u5E55");
+                Warn(L.NoTarget);
                 return;
             }
             int next = (m.Orientation == _cfg.OrientA) ? _cfg.OrientB : _cfg.OrientA;
@@ -1087,6 +1146,7 @@ namespace MonitorRotateTray
                 catch { }
             }
 
+            _lastError = err ?? "(none)";
             if (err != null) Warn(err);
             _lastState = null;
             _verifyUntil = DateTime.Now + VerifyWindow;
@@ -1109,7 +1169,7 @@ namespace MonitorRotateTray
         private void ApplyQuadrant(int q)
         {
             var m = Target();
-            if (m == null) { Warn("\u627E\u4E0D\u5230\u76EE\u6A19\u87A2\u5E55"); return; }
+            if (m == null) { Warn(L.NoTarget); return; }
             Apply(m, q);
         }
 
@@ -1271,7 +1331,7 @@ namespace MonitorRotateTray
             for (int q = 0; q < 4; q++)
             {
                 int qq = q;
-                var it = new ToolStripMenuItem(Names.Orient(q), null, delegate { ApplyQuadrant(qq); });
+                var it = new ToolStripMenuItem(L.Orient(q), null, delegate { ApplyQuadrant(qq); });
                 it.Checked = (m != null && m.Orientation == q);
                 it.Enabled = (m != null);
                 _menu.Items.Add(it);
@@ -1279,13 +1339,13 @@ namespace MonitorRotateTray
 
             _menu.Items.Add(new ToolStripSeparator());
 
-            // 左鍵切換組合
+            // the pair the left click flips between
             var pair = new ToolStripMenuItem("\u5DE6\u9375\u5207\u63DB\u7D44\u5408\uFF1A"
-                + Names.Orient(_cfg.OrientA) + " \u2194 " + Names.Orient(_cfg.OrientB));
+                + L.Orient(_cfg.OrientA) + " \u2194 " + L.Orient(_cfg.OrientB));
             for (int q = 0; q < 4; q++)
             {
                 int qq = q;
-                var a = new ToolStripMenuItem("A = " + Names.Orient(q), null,
+                var a = new ToolStripMenuItem("A = " + L.Orient(q), null,
                     delegate { _cfg.OrientA = qq; _cfg.Save(); });
                 a.Checked = _cfg.OrientA == q;
                 pair.DropDownItems.Add(a);
@@ -1294,14 +1354,14 @@ namespace MonitorRotateTray
             for (int q = 0; q < 4; q++)
             {
                 int qq = q;
-                var b = new ToolStripMenuItem("B = " + Names.Orient(q), null,
+                var b = new ToolStripMenuItem("B = " + L.Orient(q), null,
                     delegate { _cfg.OrientB = qq; _cfg.Save(); });
                 b.Checked = _cfg.OrientB == q;
                 pair.DropDownItems.Add(b);
             }
             _menu.Items.Add(pair);
 
-            // 目標螢幕
+            // which monitor to act on
             var pick = new ToolStripMenuItem("\u76EE\u6A19\u87A2\u5E55");
             foreach (var mon in all)
             {
@@ -1323,13 +1383,12 @@ namespace MonitorRotateTray
             }
             _menu.Items.Add(pick);
 
-            // 斷線時隱藏圖示
-            string[] sides = { "\u5DE6\u908A", "\u53F3\u908A", "\u6B63\u4E0A\u65B9", "\u6B63\u4E0B\u65B9" };
-            var place = new ToolStripMenuItem("\u5916\u63A5\u87A2\u5E55\u4F4D\u7F6E\uFF1A" + sides[(int)_cfg.Placement]);
+            // position and alignment
+            var place = new ToolStripMenuItem(L.PositionMenu + L.Side((int)_cfg.Placement));
             for (int i = 0; i < 4; i++)
             {
                 Placement pp = (Placement)i;
-                var pi = new ToolStripMenuItem(sides[i], null, delegate
+                var pi = new ToolStripMenuItem(L.Side(i), null, delegate
                 {
                     _cfg.Placement = pp; _cfg.Save();
                     var t = Target(); if (t != null) EnforceLayout(t);
@@ -1341,24 +1400,20 @@ namespace MonitorRotateTray
             place.DropDownItems.Add(new ToolStripSeparator());
 
             bool horizontal = _cfg.Placement == Placement.Left || _cfg.Placement == Placement.Right;
-            string[] aligns = horizontal
-                ? new string[] { "\u4E0A\u7DE3\u5207\u9F4A", "\u5782\u76F4\u7F6E\u4E2D", "\u4E0B\u7DE3\u5207\u9F4A" }
-                : new string[] { "\u5DE6\u7DE3\u5207\u9F4A", "\u6C34\u5E73\u7F6E\u4E2D", "\u53F3\u7DE3\u5207\u9F4A" };
 
-            var autoAlign = new ToolStripMenuItem(
-                "\u81EA\u52D5\uFF08\u5DE6\u53F3\u2192\u4E0B\u7DE3\u5207\u9F4A\uFF0C\u4E0A\u4E0B\u2192\u6C34\u5E73\u7F6E\u4E2D\uFF09", null, delegate
-                {
-                    _cfg.AlignMode = -1; _cfg.Save();
-                    var t = Target(); if (t != null) EnforceLayout(t);
-                    _lastState = null; Refresh();
-                });
+            var autoAlign = new ToolStripMenuItem(L.AlignAuto, null, delegate
+            {
+                _cfg.AlignMode = -1; _cfg.Save();
+                var t = Target(); if (t != null) EnforceLayout(t);
+                _lastState = null; Refresh();
+            });
             autoAlign.Checked = _cfg.AlignMode < 0;
             place.DropDownItems.Add(autoAlign);
 
             for (int i = 0; i < 3; i++)
             {
                 int ai2 = i;
-                var ai = new ToolStripMenuItem(aligns[i], null, delegate
+                var ai = new ToolStripMenuItem(L.AlignName(horizontal, i), null, delegate
                 {
                     _cfg.AlignMode = ai2; _cfg.Save();
                     var t = Target(); if (t != null) EnforceLayout(t);
@@ -1369,19 +1424,19 @@ namespace MonitorRotateTray
             }
             place.DropDownItems.Add(new ToolStripSeparator());
 
-            var keep = new ToolStripMenuItem("\u8F49\u5411/\u91CD\u65B0\u9023\u63A5\u6642\u56FA\u5B9A\u4F4D\u7F6E", null,
+            var keep = new ToolStripMenuItem(L.KeepLayout, null,
                 delegate { _cfg.KeepLayout = !_cfg.KeepLayout; _cfg.Save(); });
             keep.Checked = _cfg.KeepLayout;
             place.DropDownItems.Add(keep);
 
-            var learn = new ToolStripMenuItem("\u8A18\u4F4F\u6211\u5728\u8A2D\u5B9A\u4E2D\u62D6\u66F3\u7684\u4F4D\u7F6E", null,
+            var learn = new ToolStripMenuItem(L.LearnPlacement, null,
                 delegate { _cfg.LearnPlacement = !_cfg.LearnPlacement; _cfg.Save(); });
             learn.Checked = _cfg.LearnPlacement;
             place.DropDownItems.Add(learn);
 
             _menu.Items.Add(place);
 
-            var hide = new ToolStripMenuItem("\u87A2\u5E55\u65B7\u7DDA\u6642\u96B1\u85CF\u5716\u793A", null, delegate
+            var hide = new ToolStripMenuItem(L.HideDisconnect, null, delegate
             {
                 _cfg.HideWhenDisconnected = !_cfg.HideWhenDisconnected;
                 _cfg.Save(); _lastState = null; Refresh();
@@ -1389,29 +1444,31 @@ namespace MonitorRotateTray
             hide.Checked = _cfg.HideWhenDisconnected;
             _menu.Items.Add(hide);
 
-            // 熱鍵
-            var hk = new ToolStripMenuItem("\u71B1\u9375 Ctrl+Alt+R", null, delegate
+            // language
+            var lang = new ToolStripMenuItem(L.LanguageMenu);
+            string[] langCodes = { "auto", "en", "zh-TW" };
+            string[] langNames = { L.LangFollow, "English", "繁體中文" };
+            for (int i = 0; i < langCodes.Length; i++)
             {
-                _cfg.Hotkey = !_cfg.Hotkey;
-                _cfg.Save();
-                if (_cfg.Hotkey)
+                string code = langCodes[i];
+                var li = new ToolStripMenuItem(langNames[i], null, delegate
                 {
-                    if (!_win.RegisterHotkey())
-                        Warn("\u71B1\u9375\u8A3B\u518A\u5931\u6557\uFF0C\u53EF\u80FD\u5DF2\u88AB\u5360\u7528");
-                }
-                else _win.UnregisterHotkey();
-            });
-            hk.Checked = _cfg.Hotkey;
-            _menu.Items.Add(hk);
+                    _cfg.Language = code; _cfg.Save();
+                    L.Use(code);
+                    _lastState = null; Refresh();
+                });
+                li.Checked = string.Equals(_cfg.Language, code, StringComparison.OrdinalIgnoreCase);
+                lang.DropDownItems.Add(li);
+            }
+            _menu.Items.Add(lang);
 
-            // 開機自動啟動
-            var auto = new ToolStripMenuItem("\u958B\u6A5F\u81EA\u52D5\u555F\u52D5", null,
+            var auto = new ToolStripMenuItem(L.Autostart, null,
                 delegate { SetAutostart(!IsAutostart()); });
             auto.Checked = IsAutostart();
             _menu.Items.Add(auto);
 
             _menu.Items.Add(new ToolStripSeparator());
-            _menu.Items.Add(new ToolStripMenuItem("\u7D50\u675F", null, delegate { ExitApp(); }));
+            _menu.Items.Add(new ToolStripMenuItem(L.Exit, null, delegate { ExitApp(); }));
         }
 
         // ---------------------------------------------------------- autostart
@@ -1508,7 +1565,6 @@ namespace MonitorRotateTray
             _exiting = true;
             _watchdog.Stop();
             SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
-            _win.UnregisterHotkey();
             _tray.Dispose();
             _win.DestroyHandle();
             try
