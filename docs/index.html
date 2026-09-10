@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Portable Monitor Rotate — one-click landscape/portrait for USB-C portable monitors on Windows</title>
+<meta name="description" content="Free 28 KB Windows tray app that rotates a portable USB-C monitor between landscape and portrait with one click, and keeps its position on the desktop across rotation, unplug and reconnect. Works with MSI PRO MP161, and any external display on Windows 10/11.">
+<meta name="keywords" content="portable monitor rotate, rotate second monitor windows, portable monitor portrait mode, MSI MP161, MP161E6T, USB-C monitor rotation, windows tray rotate display, monitor auto rotate windows 11">
+<link rel="canonical" href="https://imchiajui.github.io/portable-monitor-rotate/">
+<link rel="icon" href="favicon.ico">
+
+<meta property="og:type" content="website">
+<meta property="og:title" content="Portable Monitor Rotate">
+<meta property="og:description" content="One click in the Windows tray flips your portable monitor between landscape and portrait — and it stays exactly where you put it.">
+<meta property="og:url" content="https://imchiajui.github.io/portable-monitor-rotate/">
+<meta property="og:image" content="https://imchiajui.github.io/portable-monitor-rotate/layout.svg">
+<meta name="twitter:card" content="summary_large_image">
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Portable Monitor Rotate",
+  "operatingSystem": "Windows 10, Windows 11",
+  "applicationCategory": "UtilitiesApplication",
+  "description": "Windows tray utility that rotates a portable USB-C monitor between landscape and portrait with one click and preserves its position in the desktop layout.",
+  "url": "https://imchiajui.github.io/portable-monitor-rotate/",
+  "downloadUrl": "https://github.com/Imchiajui/portable-monitor-rotate/releases/latest",
+  "license": "https://opensource.org/licenses/MIT",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+}
+</script>
+
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1f2328; --muted: #656d76; --line: #d1d9e0;
+    --card: #f6f8fa; --accent: #0969da; --accent-fg: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --line: #3d444d;
+      --card: #151b23; --accent: #4493f8; --accent-fg: #0d1117;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.65 ui-sans-serif, -apple-system, "Segoe UI", "Noto Sans TC", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 0 24px; }
+  a { color: var(--accent); }
+
+  header { padding: 64px 0 40px; text-align: center; }
+  header img.logo { width: 64px; height: 64px; }
+  h1 { font-size: 2.3rem; line-height: 1.2; margin: 18px 0 10px; letter-spacing: -.02em; }
+  .tagline { font-size: 1.15rem; color: var(--muted); margin: 0 auto 28px; max-width: 34em; }
+
+  .btns { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .btn {
+    display: inline-block; padding: 11px 22px; border-radius: 8px; font-weight: 600;
+    text-decoration: none; border: 1px solid var(--line);
+  }
+  .btn.primary { background: var(--accent); color: var(--accent-fg); border-color: transparent; }
+  .btn.ghost { color: var(--fg); background: var(--card); }
+  .meta { margin-top: 14px; font-size: .9rem; color: var(--muted); }
+
+  #lang {
+    position: fixed; top: 14px; right: 14px; z-index: 10;
+    padding: 6px 13px; border-radius: 999px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--card); color: var(--fg);
+    font: 600 13px/1 inherit;
+  }
+
+  h2 { font-size: 1.4rem; margin: 56px 0 14px; letter-spacing: -.01em; }
+  h3 { font-size: 1.05rem; margin: 26px 0 6px; }
+  p { margin: 0 0 14px; }
+
+  /* ---- animated demo ---- */
+  .demo {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 30px 24px 22px; margin: 26px 0;
+  }
+  .stage {
+    position: relative; height: 210px; max-width: 460px; margin: 0 auto;
+  }
+  .desk {
+    position: absolute; left: 0; right: 0; bottom: 26px;
+    border-bottom: 2px dashed var(--accent); opacity: .55;
+  }
+  .screen {
+    position: absolute; bottom: 26px; border: 2px solid; border-radius: 5px;
+    display: grid; place-content: center; text-align: center;
+    font-size: 11px; line-height: 1.35; color: var(--muted);
+  }
+  .laptop {
+    right: 40px; width: 168px; height: 95px;
+    border-color: var(--muted); background: color-mix(in srgb, var(--muted) 12%, transparent);
+  }
+  /* anchored on its bottom-right corner: it grows up and left, never drifts */
+  .ext {
+    right: 208px; border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
+    color: var(--accent);
+    animation: flip 6s cubic-bezier(.65,0,.35,1) infinite;
+  }
+  @keyframes flip {
+    0%,   42% { width: 168px; height: 95px; }
+    50%,  92% { width: 95px;  height: 168px; }
+    100%      { width: 168px; height: 95px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .ext { animation: none; width: 95px; height: 168px; }
+  }
+  .caption { text-align: center; color: var(--muted); font-size: .9rem; margin-top: 16px; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 16px; margin: 22px 0; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; }
+  .card h3 { margin: 0 0 5px; font-size: 1rem; }
+  .card p { margin: 0; font-size: .93rem; color: var(--muted); }
+
+  figure { margin: 26px 0; }
+  figure img { width: 100%; height: auto; display: block; }
+
+  details {
+    border: 1px solid var(--line); border-radius: 10px; padding: 12px 18px; margin-bottom: 10px;
+    background: var(--card);
+  }
+  details summary { cursor: pointer; font-weight: 600; }
+  details p { margin: 12px 0 4px; color: var(--muted); font-size: .95rem; }
+  code {
+    font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: .88em;
+    background: color-mix(in srgb, var(--muted) 16%, transparent);
+    padding: .15em .4em; border-radius: 4px;
+  }
+  footer {
+    margin-top: 72px; padding: 26px 0 50px; border-top: 1px solid var(--line);
+    color: var(--muted); font-size: .9rem; text-align: center;
+  }
+  [data-zh] { display: none; }
+  html[lang="zh-TW"] [data-en] { display: none; }
+  html[lang="zh-TW"] [data-zh] { display: revert; }
+</style>
+</head>
+<body>
+
+<button id="lang" type="button">中文</button>
+
+<div class="wrap">
+
+<header>
+  <img class="logo" src="icon-portrait.png" alt="Portable Monitor Rotate icon">
+  <h1>Portable Monitor Rotate</h1>
+  <p class="tagline">
+    <span data-en>One click in the Windows tray flips your portable monitor between landscape and portrait — and it stays exactly where you put it.</span>
+    <span data-zh>在 Windows 工作列點一下，攜帶式螢幕就在橫向與直向之間切換 —— 而且位置不會跑掉。</span>
+  </p>
+  <div class="btns">
+    <a class="btn primary" href="https://github.com/Imchiajui/portable-monitor-rotate/releases/latest">
+      <span data-en>Download .exe</span><span data-zh>下載 .exe</span>
+    </a>
+    <a class="btn ghost" href="https://github.com/Imchiajui/portable-monitor-rotate">
+      <span data-en>Source on GitHub</span><span data-zh>GitHub 原始碼</span>
+    </a>
+  </div>
+  <p class="meta">
+    <span data-en>~28 KB · no installer · no dependencies · MIT licensed · Windows 10 / 11</span>
+    <span data-zh>約 28 KB · 免安裝 · 無相依 · MIT 授權 · Windows 10 / 11</span>
+  </p>
+</header>
+
+<div class="demo">
+  <div class="stage">
+    <div class="desk"></div>
+    <div class="screen laptop">Laptop</div>
+    <div class="screen ext">MSI</div>
+  </div>
+  <p class="caption">
+    <span data-en>Rotating changes the shape — the side and the bottom edge stay put.</span>
+    <span data-zh>轉向只改變形狀 —— 所在的那一側與下緣基準線維持不變。</span>
+  </p>
+</div>
+
+<h2><span data-en>The problem</span><span data-zh>問題</span></h2>
+<p>
+  <span data-en>Portable USB-C monitors are great in portrait mode. But most have <strong>no orientation sensor</strong>, so Windows will never auto-rotate them — you open Settings → System → Display and change the dropdown, every single time.</span>
+  <span data-zh>攜帶式 USB-C 螢幕轉成直向非常好用，但這類螢幕<strong>大多沒有方向感應器</strong>，Windows 永遠不會幫它自動旋轉 —— 你只能每次都打開「設定 → 系統 → 顯示器」改下拉選單。</span>
+</p>
+<p>
+  <span data-en>And then Windows moves it. Rotating 1920×1080 to 1080×1920 changes the monitor's shape, so Windows reflows the desktop and drops it somewhere new. Set it on the left, level with your laptop; after one rotation it floats half a screen too high.</span>
+  <span data-zh>然後 Windows 會把它搬走。1920×1080 轉成 1080×1920，形狀變了，Windows 就重排桌面把它丟到別處。你明明擺在左邊、跟筆電切齊，轉一次就飄到半個螢幕高的位置。</span>
+</p>
+
+<figure>
+  <img src="layout.svg" alt="Diagram: the external monitor keeps its side and bottom alignment in both landscape and portrait">
+</figure>
+
+<h2><span data-en>What it does</span><span data-zh>功能</span></h2>
+<div class="grid">
+  <div class="card">
+    <h3><span data-en>One click</span><span data-zh>點一下</span></h3>
+    <p><span data-en>Click the tray icon to toggle. The icon itself shows the current orientation.</span><span data-zh>點工作列圖示就切換，圖示本身會顯示目前方向。</span></p>
+  </div>
+  <div class="card">
+    <h3><span data-en>Position preserved</span><span data-zh>位置保留</span></h3>
+    <p><span data-en>Keeps its side and stays flush against the shared edge, through every rotation.</span><span data-zh>維持在同一側並緊貼共用邊，每次轉向都一樣。</span></p>
+  </div>
+  <div class="card">
+    <h3><span data-en>Survives unplugging</span><span data-zh>撐得過拔插</span></h3>
+    <p><span data-en>Reconnect and both the monitor and the tray icon return to the same place.</span><span data-zh>重新接上，螢幕與工作列圖示都回到原本的位置。</span></p>
+  </div>
+  <div class="card">
+    <h3><span data-en>Cursor stays put</span><span data-zh>游標不亂跳</span></h3>
+    <p><span data-en>No more pointer warping to the centre of the primary screen.</span><span data-zh>不再被拉到主螢幕正中央。</span></p>
+  </div>
+  <div class="card">
+    <h3><span data-en>Hotkey &amp; scripting</span><span data-zh>熱鍵與腳本</span></h3>
+    <p><span data-en>Ctrl+Alt+R, plus a named pipe so anything can drive it.</span><span data-zh>Ctrl+Alt+R，另有 named pipe 可供任何程式驅動。</span></p>
+  </div>
+  <div class="card">
+    <h3><span data-en>Tiny and quiet</span><span data-zh>小而安靜</span></h3>
+    <p><span data-en>A single 28 KB .exe. No installer, no telemetry, no network access.</span><span data-zh>單一 28 KB 執行檔。免安裝、無遙測、不連網。</span></p>
+  </div>
+</div>
+
+<h2><span data-en>Three Win32 traps behind it</span><span data-zh>背後的三個 Win32 陷阱</span></h2>
+
+<details>
+  <summary><span data-en>A stable tray position needs a GUID, not a window handle</span><span data-zh>托盤位置要穩定，靠的是 GUID</span></summary>
+  <p>
+    <span data-en>Windows keys a tray icon's remembered position on its identity. WinForms' <code>NotifyIcon</code> uses <code>(hWnd, uID)</code> — both change every launch, so Windows sees a new icon each time and dumps it in the overflow. Calling <code>Shell_NotifyIcon</code> with a fixed <code>NIF_GUID</code> is what makes the position stick.</span>
+    <span data-zh>Windows 記住托盤圖示位置的依據是它的「身分」。WinForms 的 <code>NotifyIcon</code> 使用 <code>(hWnd, uID)</code>，兩者每次啟動都會變，所以系統每次都當成新圖示丟回溢位區。直接呼叫 <code>Shell_NotifyIcon</code> 並帶固定的 <code>NIF_GUID</code>，位置才會被記住。</span>
+  </p>
+</details>
+
+<details>
+  <summary><span data-en>Version 4 tray icons deliver every click twice</span><span data-zh>Version 4 的圖示每次點擊送兩份</span></summary>
+  <p>
+    <span data-en>Under <code>NOTIFYICON_VERSION_4</code> one left click sends <code>WM_MOUSEMOVE → WM_LBUTTONDOWN → WM_LBUTTONUP → NIN_SELECT</code>. Handle both the raw message and <code>NIN_SELECT</code> and your toggle rotates then instantly rotates back — the app looks dead while doing its job perfectly, twice.</span>
+    <span data-zh>在 <code>NOTIFYICON_VERSION_4</code> 底下，按一次左鍵會送出 <code>WM_MOUSEMOVE → WM_LBUTTONDOWN → WM_LBUTTONUP → NIN_SELECT</code>。原始訊息和 <code>NIN_SELECT</code> 都接，切換就會轉過去又轉回來 —— 程式看起來毫無反應，其實完美地做了兩次。</span>
+  </p>
+</details>
+
+<details>
+  <summary><span data-en>Orientation and position must be one atomic change</span><span data-zh>方向與位置必須是同一次原子操作</span></summary>
+  <p>
+    <span data-en>Rotating changes width and height, so Windows reflows the desktop to remove the overlap it just created. Both go into one <code>DEVMODE</code>, staged with <code>CDS_NORESET</code> and committed in a single call. Hotplug needs more: Windows parks the monitor arbitrarily and may reflow again <em>after</em> you act, so geometry is only trusted once it has held still.</span>
+    <span data-zh>轉向會改變寬高，Windows 會為了消除它剛製造的重疊而重排桌面。所以兩者放進同一個 <code>DEVMODE</code>，用 <code>CDS_NORESET</code> 暫存後一次提交。熱插拔更麻煩：Windows 會把螢幕停在任意位置，而且<em>在你動作之後</em>還會再重排一次，因此幾何資料必須靜止一段時間才被採信。</span>
+  </p>
+</details>
+
+<h2><span data-en>Does your monitor really have no sensor?</span><span data-zh>你的螢幕真的沒有感應器嗎？</span></h2>
+<p>
+  <span data-en>A zero-risk test, no code required: turn the monitor to portrait and open its <strong>OSD menu</strong>. If the on-screen menu rotates to stay upright, a G-sensor is driving the scaler. If it lies on its side, there isn't one.</span>
+  <span data-zh>一個零風險、不用寫程式的測試：把螢幕轉成直向，然後叫出它的 <strong>OSD 選單</strong>。如果選單跟著轉正，代表有 G-sensor 在驅動 scaler；如果選單是躺著的，就沒有。</span>
+</p>
+<p>
+  <span data-en>The repository documents the full check — Windows sensor stack, HID report descriptors (usage page <code>0x20</code>), and the DDC/CI capability string (VCP <code>0xAA</code>).</span>
+  <span data-zh>Repo 裡記錄了完整的檢測方法 —— Windows 感應器堆疊、HID 報告描述元（usage page <code>0x20</code>）、以及 DDC/CI capability 字串（VCP <code>0xAA</code>）。</span>
+</p>
+
+<footer>
+  <p>
+    <span data-en>MIT licensed · Built for an MSI PRO MP161 E6T, works with any external display.</span>
+    <span data-zh>MIT 授權 · 為 MSI PRO MP161 E6T 而生，適用任何外接螢幕。</span>
+  </p>
+  <p><a href="https://github.com/Imchiajui/portable-monitor-rotate">github.com/Imchiajui/portable-monitor-rotate</a></p>
+</footer>
+
+</div>
+
+<script>
+(function () {
+  var btn = document.getElementById('lang');
+  function set(lang) {
+    document.documentElement.lang = lang;
+    btn.textContent = lang === 'zh-TW' ? 'English' : '中文';
+    try { localStorage.setItem('pmr-lang', lang); } catch (e) {}
+  }
+  var saved = null;
+  try { saved = localStorage.getItem('pmr-lang'); } catch (e) {}
+  set(saved || (/^zh/i.test(navigator.language || '') ? 'zh-TW' : 'en'));
+  btn.addEventListener('click', function () {
+    set(document.documentElement.lang === 'zh-TW' ? 'en' : 'zh-TW');
+  });
+})();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,6 @@
+# build output
+*.exe
+*.pdb
+bin/
+obj/
+build.rsp
