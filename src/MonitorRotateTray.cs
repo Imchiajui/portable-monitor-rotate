@@ -49,6 +49,8 @@ namespace MonitorRotateTray
         public const int WM_CONTEXTMENU = 0x007B;
         public const int NIN_SELECT     = 0x0400;   // WM_USER + 0
         public const int NIN_KEYSELECT  = 0x0401;   // WM_USER + 1
+        public const int NIN_BALLOONTIMEOUT   = 0x0404;   // WM_USER + 4
+        public const int NIN_BALLOONUSERCLICK = 0x0405;   // WM_USER + 5
 
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
         public struct NOTIFYICONDATA
@@ -180,6 +182,39 @@ namespace MonitorRotateTray
         [DllImport("user32.dll")]
         public static extern bool SetCursorPos(int x, int y);
 
+        // --- HID enumeration: only used to tell whether an external touch screen is attached ---
+        [StructLayout(LayoutKind.Sequential)]
+        public struct SP_DEVICE_INTERFACE_DATA { public int cbSize; public Guid InterfaceClassGuid; public int Flags; public IntPtr Reserved; }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct HIDP_CAPS
+        {
+            public ushort Usage, UsagePage, InputReportByteLength, OutputReportByteLength, FeatureReportByteLength;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 17)] public ushort[] Reserved;
+            public ushort NumberLinkCollectionNodes, NumberInputButtonCaps, NumberInputValueCaps, NumberInputDataIndices;
+            public ushort NumberOutputButtonCaps, NumberOutputValueCaps, NumberOutputDataIndices;
+            public ushort NumberFeatureButtonCaps, NumberFeatureValueCaps, NumberFeatureDataIndices;
+        }
+
+        [DllImport("hid.dll")] public static extern void HidD_GetHidGuid(out Guid g);
+        [DllImport("hid.dll")] public static extern bool HidD_GetPreparsedData(IntPtr h, out IntPtr p);
+        [DllImport("hid.dll")] public static extern bool HidD_FreePreparsedData(IntPtr p);
+        [DllImport("hid.dll")] public static extern int HidP_GetCaps(IntPtr p, out HIDP_CAPS c);
+
+        [DllImport("setupapi.dll", CharSet = CharSet.Unicode)]
+        public static extern IntPtr SetupDiGetClassDevs(ref Guid g, IntPtr enumerator, IntPtr hwnd, int flags);
+        [DllImport("setupapi.dll")]
+        public static extern bool SetupDiEnumDeviceInterfaces(IntPtr set, IntPtr info, ref Guid g, int index, ref SP_DEVICE_INTERFACE_DATA data);
+        [DllImport("setupapi.dll", CharSet = CharSet.Unicode)]
+        public static extern bool SetupDiGetDeviceInterfaceDetail(IntPtr set, ref SP_DEVICE_INTERFACE_DATA data, IntPtr detail, int size, ref int required, IntPtr info);
+        [DllImport("setupapi.dll")]
+        public static extern bool SetupDiDestroyDeviceInfoList(IntPtr set);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        public static extern IntPtr CreateFile(string name, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+        [DllImport("kernel32.dll")]
+        public static extern bool CloseHandle(IntPtr h);
+
         public static int LoWord(IntPtr v) { return unchecked((short)(long)v); }
         public static int HiWord(IntPtr v) { return unchecked((short)((long)v >> 16)); }
     }
@@ -194,6 +229,7 @@ namespace MonitorRotateTray
         public int Orientation;     // 0 = 0deg, 1 = 90, 2 = 180, 3 = 270
         public int Width, Height;
         public int PosX, PosY;      // top-left in virtual-desktop coords; primary is (0,0)
+        public string DevicePath;   // \\?\DISPLAY#CND30FE#...#{guid} - what touch mappings refer to
         public bool IsPrimary;
 
         public string OrientationText { get { return L.Orient(Orientation); } }
@@ -312,12 +348,174 @@ namespace MonitorRotateTray
         public static string Autostart      { get { return S("Start with Windows", "開機自動啟動"); } }
         public static string LanguageMenu   { get { return S("Language", "語言"); } }
         public static string LangFollow     { get { return S("Follow Windows", "跟隨系統"); } }
+        public static string FixTouch       { get { return S("Fix touch mapping…", "修正觸控對應…"); } }
+        public static string TouchNotMapped { get { return S("Touches on this monitor may land on another screen. Click here to fix.", "在這台螢幕上觸控，可能會跑到其他螢幕。點這裡修正。"); } }
+        public static string TouchStale     { get { return S("This monitor is connected differently than before, so its touch mapping no longer applies. Click here to fix.", "這台螢幕的連接方式和之前不同，原本的觸控對應已失效。點這裡修正。"); } }
+        public static string TouchFixed     { get { return S("Touch is now mapped to this monitor.", "觸控已對應到這台螢幕。"); } }
+        public static string TouchUpdated   { get { return S("Touch mapping updated. Tap the monitor to check.", "觸控對應已更新，請點點看螢幕確認。"); } }
+        public static string TouchUnchanged { get { return S("Touch mapping was not changed.", "觸控對應沒有變更。"); } }
+        public static string TouchToolMissing { get { return S("Windows' touch setup tool (MultiDigiMon.exe) was not found.", "找不到 Windows 觸控設定工具 (MultiDigiMon.exe)。"); } }
+
+        public static string TouchInstructions(string monitor)
+        {
+            return S("When the white prompt appears on " + monitor + ", tap it. On any other screen, press Enter.",
+                     "白色提示出現在 " + monitor + " 上時用手指點它；出現在其他螢幕時按 Enter 跳過。");
+        }
+
         public static string Exit           { get { return S("Exit", "結束"); } }
+    }
+
+    // ------------------------------------------------------------------ Touch
+    internal enum TouchMapState { NoTouchScreen, NotMapped, Stale, Ok }
+
+    /// <summary>
+    /// Reads Windows' touch-digitizer-to-display association. Windows ties a touch panel to
+    /// a monitor either through an explicit entry under Wisp\Pen\Digimon (written by the
+    /// Tablet PC Settings setup, MultiDigiMon.exe) or, failing that, by matching USB container
+    /// IDs. Portable monitors often fail the container match, and Windows then hands the touch
+    /// panel to the built-in laptop screen. Nothing here writes: the key lives in HKLM, so
+    /// changing it needs elevation and goes through Windows' own tool.
+    /// </summary>
+    internal static class Touch
+    {
+        private const string DigimonKey = @"SOFTWARE\Microsoft\Wisp\Pen\Digimon";
+        private const ushort UsagePageDigitizer = 0x0D;
+        private const ushort UsageTouchScreen = 0x04;
+
+        public static string ToolPath
+        {
+            get
+            {
+                string win = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+                // A 32-bit process on 64-bit Windows is redirected away from System32.
+                if (!Environment.Is64BitProcess && Environment.Is64BitOperatingSystem)
+                    return Path.Combine(win, @"Sysnative\MultiDigiMon.exe");
+                return Path.Combine(win, @"System32\MultiDigiMon.exe");
+            }
+        }
+
+        /// <summary>Interface paths of USB-attached HID touch screens. Built-in I2C panels are skipped.</summary>
+        public static List<string> ExternalTouchScreens()
+        {
+            var found = new List<string>();
+            Guid hid;
+            Native.HidD_GetHidGuid(out hid);
+            IntPtr set = Native.SetupDiGetClassDevs(ref hid, IntPtr.Zero, IntPtr.Zero, 0x12); // PRESENT | DEVICEINTERFACE
+            if (set == IntPtr.Zero || set == new IntPtr(-1)) return found;
+            try
+            {
+                for (int i = 0; ; i++)
+                {
+                    var did = new Native.SP_DEVICE_INTERFACE_DATA();
+                    did.cbSize = Marshal.SizeOf(typeof(Native.SP_DEVICE_INTERFACE_DATA));
+                    if (!Native.SetupDiEnumDeviceInterfaces(set, IntPtr.Zero, ref hid, i, ref did)) break;
+
+                    int required = 0;
+                    Native.SetupDiGetDeviceInterfaceDetail(set, ref did, IntPtr.Zero, 0, ref required, IntPtr.Zero);
+                    if (required <= 0) continue;
+
+                    string path = null;
+                    IntPtr buf = Marshal.AllocHGlobal(required);
+                    try
+                    {
+                        Marshal.WriteInt32(buf, IntPtr.Size == 8 ? 8 : 6);   // sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W)
+                        if (Native.SetupDiGetDeviceInterfaceDetail(set, ref did, buf, required, ref required, IntPtr.Zero))
+                            path = Marshal.PtrToStringUni(new IntPtr(buf.ToInt64() + 4));
+                    }
+                    finally { Marshal.FreeHGlobal(buf); }
+
+                    if (string.IsNullOrEmpty(path) || path.IndexOf("vid_", StringComparison.OrdinalIgnoreCase) < 0) continue;
+
+                    IntPtr h = Native.CreateFile(path, 0, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);  // caps need no access rights
+                    if (h == new IntPtr(-1)) continue;
+                    try
+                    {
+                        IntPtr pp;
+                        if (!Native.HidD_GetPreparsedData(h, out pp)) continue;
+                        try
+                        {
+                            Native.HIDP_CAPS caps;
+                            if (Native.HidP_GetCaps(pp, out caps) == 0x110000              // HIDP_STATUS_SUCCESS
+                                && caps.UsagePage == UsagePageDigitizer && caps.Usage == UsageTouchScreen)
+                                found.Add(path);
+                        }
+                        finally { Native.HidD_FreePreparsedData(pp); }
+                    }
+                    finally { Native.CloseHandle(h); }
+                }
+            }
+            finally { Native.SetupDiDestroyDeviceInfoList(set); }
+            return found;
+        }
+
+        public static Dictionary<string, string> ReadMappings()
+        {
+            var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                var view = Environment.Is64BitOperatingSystem ? RegistryView.Registry64 : RegistryView.Default;
+                using (var hklm = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, view))
+                using (var k = hklm.OpenSubKey(DigimonKey))
+                {
+                    if (k == null) return map;
+                    foreach (string n in k.GetValueNames())
+                        map[n] = Convert.ToString(k.GetValue(n));
+                }
+            }
+            catch { }
+            return map;
+        }
+
+        /// <summary>The whole Digimon key flattened, to notice that the setup tool changed something.</summary>
+        public static string Snapshot()
+        {
+            var sb = new StringBuilder();
+            foreach (var kv in ReadMappings()) sb.Append(kv.Key).Append('=').Append(kv.Value).Append(';');
+            return sb.ToString();
+        }
+
+        /// <summary>"display#cnd30fe#4&amp;38adc3c2&amp;2&amp;uid224795" out of any form a display path takes.</summary>
+        private static string DisplayKey(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return "";
+            string lower = s.ToLowerInvariant();
+            int start = lower.IndexOf("display#", StringComparison.Ordinal);
+            if (start < 0) return "";
+            int end = lower.IndexOf("#{", start, StringComparison.Ordinal);
+            return end > start ? lower.Substring(start, end - start) : lower.Substring(start);
+        }
+
+        public static TouchMapState Evaluate(Monitor target, out string detail)
+        {
+            detail = "";
+            if (target == null) { detail = "no target monitor"; return TouchMapState.NoTouchScreen; }
+
+            var maps = ReadMappings();
+
+            string want = DisplayKey(target.DevicePath);
+            if (want.Length > 0)
+                foreach (var kv in maps)
+                    if (DisplayKey(kv.Value) == want) { detail = "mapped"; return TouchMapState.Ok; }
+
+            // Same model, different instance: the monitor came back through another port or
+            // dock, got a new UID, and the old entry no longer matches it.
+            if (!string.IsNullOrEmpty(target.HardwareId))
+            {
+                string model = "display#" + target.HardwareId.ToLowerInvariant() + "#";
+                foreach (var kv in maps)
+                    if (DisplayKey(kv.Value).StartsWith(model, StringComparison.Ordinal))
+                    { detail = "entry points at " + kv.Value; return TouchMapState.Stale; }
+            }
+
+            if (ExternalTouchScreens().Count == 0) { detail = "no external touch screen"; return TouchMapState.NoTouchScreen; }
+            detail = maps.Count == 0 ? "no Digimon entries at all" : "no entry for this monitor";
+            return TouchMapState.NotMapped;
+        }
     }
 
     internal static class Displays
     {
-        private static Dictionary<string, string> FriendlyNames()
+        private static Dictionary<string, string> FriendlyNames(Dictionary<string, string> devicePaths)
         {
             var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             try
@@ -344,6 +542,9 @@ namespace MonitorRotateTray
                     tgt.header.id = paths[i].tgt.id;
                     if (Native.DisplayConfigGetDeviceInfo(ref tgt) != 0) continue;
 
+                    if (!string.IsNullOrEmpty(tgt.monitorDevicePath) && !devicePaths.ContainsKey(src.viewGdiDeviceName))
+                        devicePaths[src.viewGdiDeviceName] = tgt.monitorDevicePath;
+
                     string name = (tgt.monitorFriendlyDeviceName ?? "").Trim();
                     if (name.Length > 0 && !map.ContainsKey(src.viewGdiDeviceName))
                         map[src.viewGdiDeviceName] = name;
@@ -355,7 +556,8 @@ namespace MonitorRotateTray
 
         public static List<Monitor> Enumerate()
         {
-            var names = FriendlyNames();
+            var devicePaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var names = FriendlyNames(devicePaths);
             var list = new List<Monitor>();
             for (uint i = 0; ; i++)
             {
@@ -381,10 +583,14 @@ namespace MonitorRotateTray
                 if (!names.TryGetValue(dd.DeviceName, out friendly) || string.IsNullOrEmpty(friendly))
                     friendly = string.IsNullOrEmpty(mon.DeviceString) ? dd.DeviceString : mon.DeviceString;
 
+                string devicePath;
+                devicePaths.TryGetValue(dd.DeviceName, out devicePath);
+
                 list.Add(new Monitor
                 {
                     Adapter = dd.DeviceName,
                     MonitorId = devId,
+                    DevicePath = devicePath ?? "",
                     HardwareId = hw,
                     Name = friendly,
                     Orientation = dm.dmDisplayOrientation,
@@ -442,12 +648,12 @@ namespace MonitorRotateTray
         public static string ApplyLayout(Monitor target, Monitor primary, int orientation,
                                          Placement p, Align a)
         {
-            if (orientation < 0 || orientation > 3) return "\u65B9\u5411\u503C\u7121\u6548";
+            if (orientation < 0 || orientation > 3) return L.BadOrientation;
 
             var dm = new Native.DEVMODE();
             dm.dmSize = (short)Marshal.SizeOf(typeof(Native.DEVMODE));
             if (!Native.EnumDisplaySettings(target.Adapter, Native.ENUM_CURRENT_SETTINGS, ref dm))
-                return "\u8B80\u53D6\u76EE\u524D\u986F\u793A\u8A2D\u5B9A\u5931\u6557";
+                return L.ReadFailed;
 
             int fields = Native.DM_DISPLAYORIENTATION | Native.DM_PELSWIDTH | Native.DM_PELSHEIGHT;
 
@@ -476,7 +682,7 @@ namespace MonitorRotateTray
 
             int rc = Native.ChangeDisplaySettingsEx(target.Adapter, ref dm, IntPtr.Zero, Native.CDS_TEST, IntPtr.Zero);
             if (rc != Native.DISP_CHANGE_SUCCESSFUL)
-                return "\u986F\u793A\u6A21\u5F0F\u4E0D\u88AB\u63A5\u53D7 (CDS_TEST rc=" + rc + ")";
+                return L.ModeRejected(rc);
 
             // NORESET stages the change, then the NULL commit applies the whole desktop at
             // once. Without staging, a position change can be rejected as an overlap while
@@ -484,11 +690,11 @@ namespace MonitorRotateTray
             rc = Native.ChangeDisplaySettingsEx(target.Adapter, ref dm, IntPtr.Zero,
                                                 Native.CDS_UPDATEREGISTRY | Native.CDS_NORESET, IntPtr.Zero);
             if (rc != Native.DISP_CHANGE_SUCCESSFUL && rc != Native.DISP_CHANGE_RESTART)
-                return "\u6392\u7A0B\u5931\u6557 (rc=" + rc + ")";
+                return L.StageFailed(rc);
 
             rc = Native.ChangeDisplaySettingsEx(null, IntPtr.Zero, IntPtr.Zero, 0, IntPtr.Zero);
             if (rc == Native.DISP_CHANGE_SUCCESSFUL || rc == Native.DISP_CHANGE_RESTART) return null;
-            return "\u5957\u7528\u5931\u6557 (rc=" + rc + ")";
+            return L.ApplyFailed(rc);
         }
     }
 
@@ -766,6 +972,7 @@ namespace MonitorRotateTray
         private readonly Action<int, int> _onContextMenu;
         private readonly Action _onTaskbarCreated;
         private readonly Func<bool> _isVersion4;
+        private readonly Action _onBalloonClick;
 
         /// <summary>Ring buffer of raw tray callbacks, so a failing click can be traced.</summary>
         public readonly List<string> RawLog = new List<string>();
@@ -779,12 +986,13 @@ namespace MonitorRotateTray
         }
 
         public MessageWindow(Action onToggle, Action<int, int> onContextMenu, Action onTaskbarCreated,
-                             Func<bool> isVersion4)
+                             Func<bool> isVersion4, Action onBalloonClick)
         {
             _onToggle = onToggle;
             _onContextMenu = onContextMenu;
             _onTaskbarCreated = onTaskbarCreated;
             _isVersion4 = isVersion4;
+            _onBalloonClick = onBalloonClick;
             CreateHandle(new CreateParams());
         }
 
@@ -817,10 +1025,11 @@ namespace MonitorRotateTray
 
                 Record(string.Format("TRAY evt=0x{0:X4} w=0x{1:X8} l=0x{2:X8} v4={3}{4}",
                     evt, m.WParam.ToInt64(), m.LParam.ToInt64(), v4,
-                    select ? " -> toggle" : (menu ? " -> menu" : " -> ignored")));
+                    select ? " -> toggle" : (menu ? " -> menu" : (evt == Native.NIN_BALLOONUSERCLICK ? " -> balloon" : " -> ignored"))));
 
                 if (select) _onToggle();
                 else if (menu) _onContextMenu(x, y);
+                else if (evt == Native.NIN_BALLOONUSERCLICK && _onBalloonClick != null) _onBalloonClick();
                 return;
             }
 
@@ -865,6 +1074,12 @@ namespace MonitorRotateTray
         private bool _enforcePending;
         private string _lastError;   // surfaced in the diagnostics log
 
+        // touch-to-display mapping: read here, fixed through Windows' own tool
+        private bool _touchCheckPending;    // look once the desktop settles after a (re)connect
+        private bool _touchWarned;          // one bubble per connection, not one per tick
+        private bool _touchFixRunning;
+        private Action _balloonAction;      // what clicking the bubble currently on screen does
+
         public TrayApp()
         {
             _cfg = Config.Load();
@@ -877,7 +1092,7 @@ namespace MonitorRotateTray
             _menu = new ContextMenuStrip();
             // _tray is assigned immediately below; the probe only runs once messages arrive.
             _win = new MessageWindow(Toggle, ShowMenu, OnTaskbarCreated,
-                                     delegate { return _tray != null && _tray.Version4; });
+                                     delegate { return _tray != null && _tray.Version4; }, OnBalloonClick);
             _tray = new TrayIcon(_win.Handle);
 
             if (string.IsNullOrEmpty(_cfg.TargetHardwareId))
@@ -934,6 +1149,15 @@ namespace MonitorRotateTray
                     : "NONE"));
                 sb.AppendLine("toggle pair : " + L.Orient(_cfg.OrientA) + " <-> " + L.Orient(_cfg.OrientB));
                 sb.AppendLine("last apply  : " + (_lastError ?? "(not attempted)"));
+                string touchDetail;
+                var touchState = Touch.Evaluate(m, out touchDetail);
+                var touchScreens = Touch.ExternalTouchScreens();
+                sb.AppendLine("touch map   : " + touchState + "   (" + touchDetail + ")");
+                sb.AppendLine("touch screen: " + (touchScreens.Count == 0 ? "(none detected)" : string.Join(" | ", touchScreens.ToArray())));
+                sb.AppendLine("monitor path: " + (m != null ? m.DevicePath : "-"));
+                var digimon = Touch.ReadMappings();
+                if (digimon.Count == 0) sb.AppendLine("digimon     : (no entries)");
+                foreach (var kv in digimon) sb.AppendLine("digimon     : " + kv.Key + "  ->  " + kv.Value);
                 sb.AppendLine();
                 string[] sideNames = { "left", "right", "above", "below" };
                 string[] alignNames = { "start", "centre", "end" };
@@ -1146,7 +1370,8 @@ namespace MonitorRotateTray
                 catch { }
             }
 
-            _lastError = err ?? "(none)";
+            _lastError = (err ?? "ok") + "   (" + m.Orientation + " -> " + orientation + " at "
+                       + DateTime.Now.ToString("HH:mm:ss") + ")";
             if (err != null) Warn(err);
             _lastState = null;
             _verifyUntil = DateTime.Now + VerifyWindow;
@@ -1175,7 +1400,92 @@ namespace MonitorRotateTray
 
         private void Warn(string msg)
         {
-            _tray.Balloon("\u87A2\u5E55\u65B9\u5411", msg, true);
+            _balloonAction = null;
+            _tray.Balloon(L.BalloonTitle, msg, true);
+        }
+
+        private void Info(string msg)
+        {
+            _balloonAction = null;
+            _tray.Balloon(L.BalloonTitle, msg, false);
+        }
+
+        private void OnBalloonClick()
+        {
+            var action = _balloonAction;
+            _balloonAction = null;
+            if (action != null) action();
+        }
+
+        // ------------------------------------------------------------ touch
+        /// <summary>
+        /// Once the desktop has settled after a (re)connect, check where this monitor's touches
+        /// would go and offer a one-click fix when they would land on another screen.
+        /// </summary>
+        private void CheckTouch(Monitor target)
+        {
+            if (_touchWarned || _touchFixRunning) return;
+
+            string detail;
+            var state = Touch.Evaluate(target, out detail);
+            if (state != TouchMapState.NotMapped && state != TouchMapState.Stale) return;
+
+            _touchWarned = true;
+            _tray.Balloon(L.BalloonTitle, state == TouchMapState.Stale ? L.TouchStale : L.TouchNotMapped, true);
+            _balloonAction = LaunchTouchFix;    // after Balloon: clicking the bubble runs the fix
+        }
+
+        private void LaunchTouchFix()
+        {
+            if (_touchFixRunning) return;
+
+            string tool = Touch.ToolPath;
+            if (!File.Exists(tool)) { Warn(L.TouchToolMissing); return; }
+
+            var target = Target();
+            string before = Touch.Snapshot();
+            try
+            {
+                // The tool's manifest requires elevation, so ShellExecute raises the UAC prompt.
+                var psi = new System.Diagnostics.ProcessStartInfo(tool, "-touch");
+                psi.UseShellExecute = true;
+                var p = System.Diagnostics.Process.Start(psi);
+                if (p == null) return;
+
+                _touchFixRunning = true;
+                Info(L.TouchInstructions(target != null ? target.Name : "?"));
+
+                p.EnableRaisingEvents = true;
+                p.Exited += delegate
+                {
+                    try { _sync.BeginInvoke((Action)delegate { OnTouchFixDone(before); }); } catch { }
+                };
+            }
+            catch (System.ComponentModel.Win32Exception ex)
+            {
+                _touchFixRunning = false;
+                if (ex.NativeErrorCode != 1223) Warn(ex.Message);   // 1223 = UAC declined
+            }
+            catch (Exception ex)
+            {
+                _touchFixRunning = false;
+                Warn(ex.Message);
+            }
+        }
+
+        private void OnTouchFixDone(string before)
+        {
+            _touchFixRunning = false;
+
+            string detail;
+            var state = Touch.Evaluate(Target(), out detail);
+            bool changed = Touch.Snapshot() != before;
+
+            if (state == TouchMapState.Ok) Info(L.TouchFixed);
+            else if (changed) Info(L.TouchUpdated);
+            else Warn(L.TouchUnchanged);
+
+            WriteLog("touch setup finished");
         }
 
         // ----------------------------------------------------------------- UI
@@ -1199,6 +1509,8 @@ namespace MonitorRotateTray
             {
                 _enforcePending = true;                       // reconnect edge
                 _verifyUntil = DateTime.Now + VerifyWindow;
+                _touchCheckPending = true;
+                _touchWarned = false;
             }
             _wasPresent = present;
 
@@ -1222,6 +1534,12 @@ namespace MonitorRotateTray
                     // Outside the verify window the user is in charge: adopt what they set.
                     LearnLayout(m);
                 }
+
+                if (_touchCheckPending && present && _lastSignature != null)
+                {
+                    _touchCheckPending = false;
+                    CheckTouch(m);
+                }
             }
 
             if (!present && _cfg.HideWhenDisconnected)
@@ -1238,9 +1556,9 @@ namespace MonitorRotateTray
             bool portrait = present && m.IsPortrait;
             IntPtr hIcon = RenderIcon(portrait, present);
 
-            string name = present ? m.Name : "\u672A\u9023\u63A5";
-            string tip = name + "\n" + (present ? m.OrientationText : "\u627E\u4E0D\u5230\u87A2\u5E55")
-                       + "\n\u5DE6\u9375\u5207\u63DB / \u53F3\u9375\u9078\u55AE";
+            string name = present ? m.Name : L.NotConnected;
+            string tip = name + "\n" + (present ? m.OrientationText : L.NoMonitorFound)
+                       + "\n" + L.TipHint;
 
             if (_tray.Shown) _tray.Update(hIcon, tip);
             else _tray.Show(hIcon, tip);
@@ -1323,7 +1641,7 @@ namespace MonitorRotateTray
             var m = Target();
 
             var header = new ToolStripMenuItem(
-                m != null ? m.Name + "  \u2014  " + m.OrientationText : "\u627E\u4E0D\u5230\u76EE\u6A19\u87A2\u5E55");
+                m != null ? m.Name + "  \u2014  " + m.OrientationText : L.NoTarget);
             header.Enabled = false;
             _menu.Items.Add(header);
             _menu.Items.Add(new ToolStripSeparator());
@@ -1340,7 +1658,7 @@ namespace MonitorRotateTray
             _menu.Items.Add(new ToolStripSeparator());
 
             // the pair the left click flips between
-            var pair = new ToolStripMenuItem("\u5DE6\u9375\u5207\u63DB\u7D44\u5408\uFF1A"
+            var pair = new ToolStripMenuItem(L.TogglePair
                 + L.Orient(_cfg.OrientA) + " \u2194 " + L.Orient(_cfg.OrientB));
             for (int q = 0; q < 4; q++)
             {
@@ -1362,12 +1680,12 @@ namespace MonitorRotateTray
             _menu.Items.Add(pair);
 
             // which monitor to act on
-            var pick = new ToolStripMenuItem("\u76EE\u6A19\u87A2\u5E55");
+            var pick = new ToolStripMenuItem(L.TargetMonitor);
             foreach (var mon in all)
             {
                 Monitor cap = mon;
                 string label = cap.Name + "  (" + cap.Adapter
-                    + (cap.IsPrimary ? ", \u4E3B\u8981" : "") + ")";
+                    + (cap.IsPrimary ? ", " + L.PrimarySuffix : "") + ")";
                 var it = new ToolStripMenuItem(label, null, delegate
                 {
                     _cfg.TargetHardwareId = cap.HardwareId; _cfg.Save(); _lastState = null; Refresh();
@@ -1377,7 +1695,7 @@ namespace MonitorRotateTray
             }
             if (all.Count == 0)
             {
-                var none = new ToolStripMenuItem("(\u6C92\u6709\u53EF\u7528\u87A2\u5E55)");
+                var none = new ToolStripMenuItem(L.NoDisplays);
                 none.Enabled = false;
                 pick.DropDownItems.Add(none);
             }
@@ -1443,6 +1761,17 @@ namespace MonitorRotateTray
             });
             hide.Checked = _cfg.HideWhenDisconnected;
             _menu.Items.Add(hide);
+
+            // Only offered when there is a touch screen to map, or a mapping to repair.
+            string touchDetail;
+            var touchState = Touch.Evaluate(m, out touchDetail);
+            if (touchState != TouchMapState.NoTouchScreen)
+            {
+                string mark = touchState == TouchMapState.Ok ? "  \u2713" : "  \u26A0";
+                var fixTouch = new ToolStripMenuItem(L.FixTouch + mark, null, delegate { LaunchTouchFix(); });
+                fixTouch.Enabled = !_touchFixRunning;
+                _menu.Items.Add(fixTouch);
+            }
 
             // language
             var lang = new ToolStripMenuItem(L.LanguageMenu);
@@ -1549,6 +1878,7 @@ namespace MonitorRotateTray
                 Refresh();
             }
             else if (cmd == "diag") WriteLog("on demand");
+            else if (cmd == "touch") LaunchTouchFix();
             else if (cmd == "layout")
             {
                 var t = Target();

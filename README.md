@@ -9,7 +9,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%20%2F%2011-0078D4)](#)
 [![Download](https://img.shields.io/github/v/release/Imchiajui/portable-monitor-rotate?label=download)](https://github.com/Imchiajui/portable-monitor-rotate/releases/latest)
-[![Size](https://img.shields.io/badge/size-~28%20KB-brightgreen)](#)
+[![Size](https://img.shields.io/badge/size-~49%20KB-brightgreen)](#)
 
 [繁體中文說明](README.zh-TW.md) · [Download the .exe](https://github.com/Imchiajui/portable-monitor-rotate/releases/latest)
 
@@ -23,7 +23,7 @@ Portable USB-C monitors are great in portrait mode — code, documents, chat, lo
 
 And then Windows moves it. Rotate a 1920×1080 monitor to 1080×1920 and its position in the virtual desktop changes shape, so Windows reflows the layout and drops your monitor somewhere new. You set it to sit on the left, level with your laptop; after one rotation it is floating half a screen too high.
 
-This is a 28 KB tray utility that fixes both halves of that.
+This is a 49 KB tray utility that fixes both halves of that.
 
 ![How the layout is preserved](docs/layout.svg)
 
@@ -77,6 +77,17 @@ Two monitors always share an edge exactly — no gaps, no diagonal offsets.
 
 Drag the monitor somewhere else in Windows Settings and the app adopts your new arrangement — it won't fight you.
 
+### Touch screens
+
+If your portable monitor has a touch panel, Windows has to know which display that panel belongs to. It works this out from USB container IDs, which portable monitors frequently get wrong — and then **your touches land on the laptop screen** instead. It becomes likelier the moment you add a third display.
+
+The app checks this whenever the monitor connects. If touches would go to the wrong screen it shows a notification; click it (or right-click the tray icon → **Fix touch mapping…**) to run Windows' own touch setup:
+
+1. Approve the UAC prompt — the setup tool requires administrator rights.
+2. A white prompt appears on each screen in turn. **Tap it on the portable monitor**; press **Enter** on the others.
+
+The mapping is tied to the port the monitor is plugged into. Plug it in somewhere else and Windows sees a different device, so the old mapping stops applying — the app notices that too and offers the fix again. The menu item shows ✓ when the mapping is right and ⚠ when it isn't.
+
 ### Scripting
 
 The tray app listens on a named pipe, so anything can drive it:
@@ -85,7 +96,7 @@ The tray app listens on a named pipe, so anything can drive it:
 \\.\pipe\MonitorRotateTray
 ```
 
-Send one line: `toggle`, `landscape`, `portrait`, `0`–`3`, `layout`, `show`, `diag`, `quit`.
+Send one line: `toggle`, `landscape`, `portrait`, `0`–`3`, `layout`, `touch`, `show`, `diag`, `quit`.
 
 The executable is also its own client — run it with an argument and it forwards the command:
 

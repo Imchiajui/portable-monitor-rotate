@@ -9,7 +9,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%20%2F%2011-0078D4)](#)
 [![Download](https://img.shields.io/github/v/release/Imchiajui/portable-monitor-rotate?label=download)](https://github.com/Imchiajui/portable-monitor-rotate/releases/latest)
-[![Size](https://img.shields.io/badge/size-~28%20KB-brightgreen)](#)
+[![Size](https://img.shields.io/badge/size-~49%20KB-brightgreen)](#)
 
 [English](README.md) · [下載 .exe](https://github.com/Imchiajui/portable-monitor-rotate/releases/latest)
 
@@ -23,7 +23,7 @@
 
 然後 Windows 會把它搬走。1920×1080 轉成 1080×1920，形狀變了，Windows 就重排整個虛擬桌面，把你的螢幕丟到別的地方。你明明把它擺在左邊、跟筆電切齊，轉一次方向就飄到半個螢幕高的位置。
 
-這是一支 28 KB 的常駐小工具，兩個問題一起解決。
+這是一支 49 KB 的常駐小工具，兩個問題一起解決。
 
 ![位置如何被保留](docs/layout.svg)
 
@@ -77,6 +77,17 @@
 
 如果你在 Windows 設定裡把螢幕拖到別的位置，程式會採用你的新安排，不會跟你搶。
 
+### 觸控螢幕
+
+如果你的攜帶式螢幕有觸控面板，Windows 必須知道這片面板屬於哪台螢幕。它靠 USB Container ID 自動判斷，而攜帶式螢幕經常判斷失敗 —— 結果就是**觸控跑到筆電螢幕上**。接上第三台螢幕後尤其容易發生。
+
+程式會在螢幕每次連接時檢查這件事。如果觸控會落在錯誤的螢幕，會跳出通知；點通知（或在圖示上按右鍵 →「**修正觸控對應…**」）就會啟動 Windows 內建的觸控設定：
+
+1. 按 UAC 的「是」—— 這個設定工具需要系統管理員權限。
+2. 每台螢幕會輪流出現白色提示。**在攜帶式螢幕上用手指點它**，其他螢幕按 **Enter** 跳過。
+
+觸控對應綁定在螢幕插的連接埠上。換個孔或換 dock，Windows 會把它當成不同的裝置，原本的對應就失效 —— 程式也會偵測到並再次提示修正。選單項目在對應正確時顯示 ✓，不正確時顯示 ⚠。
+
 ### 腳本控制
 
 程式會監聽一個 named pipe，任何東西都能驅動它：
@@ -85,7 +96,7 @@
 \\.\pipe\MonitorRotateTray
 ```
 
-送出一行文字即可：`toggle`、`landscape`、`portrait`、`0`–`3`、`layout`、`show`、`diag`、`quit`。
+送出一行文字即可：`toggle`、`landscape`、`portrait`、`0`–`3`、`layout`、`touch`、`show`、`diag`、`quit`。
 
 exe 本身同時也是 client —— 帶參數執行就是送指令：
 
